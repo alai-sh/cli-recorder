@@ -65,6 +65,10 @@ columns = 80                  # the terminal's width, 80 by default
 | `setup` | Shell commands run before recording starts, which aren't shown |
 | `commands` | Shell commands typed and run, in order |
 | `columns` | The terminal's width, 80 by default. The player fits a recording to the page, so a wider terminal gives smaller text |
+| `rows` | The terminal's height for a full-screen program, such as a TUI, from 1 to 48. The recording is that tall, as a full-screen program draws anywhere on the screen, and its pauses aren't shortened. It can't be used with `panes` |
+| `keys` | Keys pressed while the last command runs, for a full-screen program such as a TUI. Each is a key name (`enter`, `tab`, `space`, `escape`, `backspace`, `up`, `down`, `left`, `right`, `home`, `end`, `pageup`, `pagedown`) or text to type, and a number is a pause in seconds. `{ click = [column, row] }` clicks the left button there, counting from 1. They start once the program writes something, half a second apart. A program still running 5 seconds after its last key is stopped and the recording fails. Each key is written to the recording as an input event. The player shows each key as it's pressed, and the page shows a click as a ring where it lands |
+| `timeout` | Seconds a command can run before it's stopped and the recording fails, 60 by default |
+| `env` | Environment variables for the recording's commands, on top of the fixture's |
 | `live` | `true` to skip the fixture's environment and record only when named, as `record NAME`. A live recording is written to `docs/assets/casts/` to be committed, with light and dark SVGs made by asg |
 | `panes` | A split screen in place of `commands`, as `[[recording.panes]]` tables from top to bottom. Each has a `title`, a `directory` and its `commands` |
 

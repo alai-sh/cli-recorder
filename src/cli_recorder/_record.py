@@ -34,6 +34,7 @@ import re
 import select
 import shlex
 import shutil
+import signal
 import struct
 import subprocess
 import sys
@@ -50,7 +51,8 @@ COLUMNS = 80
 page's width, so fewer columns means larger text."""
 ROWS = 48
 """The terminal's size while recording. The file's height is cut to the rows the recording uses. A recording that
-needs more fails, as its first lines would scroll away before it ends."""
+needs more fails, as its first lines would scroll away before it ends. A recording that sets ``rows``, for a
+full-screen program, is recorded and played at that height instead."""
 
 PROMPT = "\x1b[1;34m{cwd}\x1b[0m \x1b[1;32m$\x1b[0m "
 """The shell's prompt, the working directory with the home directory as ~, as most shells show it."""
@@ -62,6 +64,28 @@ AFTER_OUTPUT = 1.5
 IDLE_TIME_LIMIT = 1
 """The longest pause the player shows in a recording, in seconds. A live recording has none, as how long its commands
 take is what it shows."""
+TIMEOUT = 60
+"""Seconds a command can run before it's stopped and the recording fails, unless the recording sets ``timeout``."""
+KEY_PAUSE = 0.5
+"""Seconds between each of a recording's ``keys``, after the program first writes something."""
+KEYS_GRACE = 5.0
+"""Seconds a program can keep running after its last key before it's stopped and the recording fails."""
+KEYS = {
+    "enter": b"\r",
+    "tab": b"\t",
+    "space": b" ",
+    "escape": b"\x1b",
+    "backspace": b"\x7f",
+    "up": b"\x1b[A",
+    "down": b"\x1b[B",
+    "right": b"\x1b[C",
+    "left": b"\x1b[D",
+    "home": b"\x1b[H",
+    "end": b"\x1b[F",
+    "pageup": b"\x1b[5~",
+    "pagedown": b"\x1b[6~",
+}
+"""The keys a recording's ``keys`` can name, as xterm sends them. Any other string is typed as it's written."""
 LIVE_HOLD = 5.0
 """Seconds a live recording holds on how it ends, so its SVG can be read before it starts over."""
 
@@ -130,6 +154,7 @@ def _write(
     home = pathlib.Path(tempfile.mkdtemp(prefix="cli-recorder-home-")).resolve()
     try:
         env = _environment(home, {} if live else extra, bin_dir)
+        env.update({k: str(v) for k, v in _as_dict(recording.get("env")).items()})
         cast = _record(recording, home, env, getattr(fixture, "prepare", None))
     finally:
         shutil.rmtree(home)
@@ -166,6 +191,15 @@ def _record(
     if not isinstance(columns, int):
         msg = f"{recording['name']}: columns must be an integer"
         raise TypeError(msg)
+    timeout = recording.get("timeout", TIMEOUT)
+    if not isinstance(timeout, (int, float)) or isinstance(timeout, bool) or timeout <= 0:
+        msg = f"{recording['name']}: timeout must be a number of seconds"
+        raise TypeError(msg)
+    keys = _keys(recording)
+    fixed = recording.get("rows")
+    if fixed is not None and (not isinstance(fixed, int) or not 0 < fixed <= ROWS or "panes" in recording):
+        msg = f"{recording['name']}: rows must be an integer from 1 to {ROWS}, and can't be used with panes"
+        raise TypeError(msg)
     project = home / str(recording.get("directory", "project"))
     project.mkdir(exist_ok=True)
     for path, content in _as_dict(recording.get("files")).items():
@@ -188,7 +222,8 @@ def _record(
         events: list[tuple[float, str]] = []
         clock = pause = 0.0
         cwd = project
-        for command in _as_list(recording.get("commands")):
+        commands = _as_list(recording.get("commands"))
+        for i, command in enumerate(commands):
             events.append((clock, _prompt(cwd, home)))
             clock += pause
             for char in command:
@@ -196,7 +231,10 @@ def _record(
                 events.append((clock, char))
             clock += BEFORE_ENTER
             events.append((clock, "\r\n"))
-            cwd, output = _command(recording, command, cwd, home, env, columns)
+            last = i == len(commands) - 1
+            cwd, output = _command(
+                recording, command, cwd, home, env, columns, fixed or ROWS, timeout, keys if last else []
+            )
             for offset, data in output or []:
                 events.append((clock + offset, data))
             # The prompt shows as soon as the command finishes, and the next is typed after time to read its output,
@@ -204,11 +242,12 @@ def _record(
             clock = events[-1][0]
             pause = 0.0 if output is None else AFTER_OUTPUT
         events += [(clock, _prompt(cwd, home)), (clock + pause, "")]
-        rows = _rows_used("".join(data for _, data in events), columns)
+        # A full-screen program draws anywhere on the screen, so only the rows it was given say how tall it is.
+        rows = fixed or _rows_used(_output_text(events), columns)
 
     if rows > ROWS:
         # The output, without escapes, says why: a warning or traceback only one machine prints is otherwise lost.
-        text = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\r", "", "".join(d for _, d in events))
+        text = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\r", "", _output_text(events))
         msg = (
             f"{recording['name']}: needs {rows} rows, more than the {ROWS} recorded; shorten it or raise ROWS:\n{text}"
         )
@@ -224,22 +263,32 @@ def _record(
         # Held from the last thing drawn, in place of the usual hold on output.
         last = max(t for t, data in events if data)
         events = [(t, data) for t, data in events if data] + [(last + LIVE_HOLD, "")]
-    else:
+    elif fixed is None:
+        # A full-screen program's pauses are its script's own, so they're kept as they are.
         header["idle_time_limit"] = IDLE_TIME_LIMIT
     lines = [json.dumps(header)]
     # Rounded from the start rather than each interval, so the rounding doesn't add up over the recording.
     previous = 0.0
     for t, data in events:
-        lines.append(json.dumps([round(round(t, 3) - previous, 3), "o", data], ensure_ascii=False))
+        kind = "i" if isinstance(data, _Key) else "o"
+        lines.append(json.dumps([round(round(t, 3) - previous, 3), kind, data], ensure_ascii=False))
         previous = round(t, 3)
     return "\n".join(lines) + "\n"
 
 
 def _command(
-    recording: dict[str, object], command: str, cwd: pathlib.Path, home: pathlib.Path, env: dict[str, str], columns: int
+    recording: dict[str, object],
+    command: str,
+    cwd: pathlib.Path,
+    home: pathlib.Path,
+    env: dict[str, str],
+    columns: int,
+    rows: int = ROWS,
+    timeout: float = TIMEOUT,
+    keys: _c.Sequence[tuple[float, bytes]] = (),
 ) -> tuple[pathlib.Path, list[tuple[float, str]] | None]:
-    """Run one of a recording's commands in ``cwd``, returning the directory the next runs in and what it wrote and
-    when, or None for a ``cd``."""
+    """Run one of a recording's commands in ``cwd``, pressing ``keys`` once it starts writing, returning the
+    directory the next runs in and what it wrote and when, or None for a ``cd``."""
     args = shlex.split(command)
     if args[0] == "cd":
         # Each command runs in a shell of its own, so a cd is followed here and shown by the next prompt.
@@ -248,12 +297,17 @@ def _command(
             msg = f"{recording['name']}: {command!r} isn't a directory in the recording's home"
             raise RuntimeError(msg)
         return cwd, None
-    output, status = _run(command, cwd, env, columns)
+    try:
+        output, status = _run(command, cwd, env, columns, rows, timeout, keys)
+    except _Stopped as e:
+        text = re.sub(r"\x1b\[[0-9;?<>=$]*[A-Za-z~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\r", "", e.text)
+        msg = f"{recording['name']}: {command!r} {e.reason}, so it was stopped. It wrote:\n{text[-4000:]}"
+        raise RuntimeError(msg) from None
     if status == 127:  # the shell couldn't find the command, rather than it failing on purpose
         msg = f"{recording['name']}: {command!r} wasn't found:\n{''.join(data for _, data in output)}"
         raise RuntimeError(msg)
     # The home directory is a temporary one, shown as ~ as in the prompt; ansible-galaxy prints its paths.
-    return cwd, [(offset, data.replace(str(home), "~")) for offset, data in output]
+    return cwd, [(offset, data if isinstance(data, _Key) else data.replace(str(home), "~")) for offset, data in output]
 
 
 def _record_panes(
@@ -351,7 +405,7 @@ def _pane(
         time.sleep(BEFORE_ENTER)
         events.append((now(), "\r\n"))
         began = now()
-        cwd, output = _command(recording, command, cwd, home, env, columns)
+        cwd, output = _command(recording, command, cwd, home, env, columns, timeout=_timeout(recording))
         if output is not None:
             busy.append((began, now()))
             events += [(began + offset, data) for offset, data in output]
@@ -367,11 +421,85 @@ def _prompt(cwd: pathlib.Path, home: pathlib.Path) -> str:
     return PROMPT.format(cwd=shown)
 
 
-def _run(command: str, cwd: pathlib.Path, env: dict[str, str], columns: int) -> tuple[list[tuple[float, str]], int]:
+class _Key(str):
+    """A key pressed, written to the recording as an input event rather than output."""
+
+    __slots__ = ()
+
+
+def _output_text(events: _c.Iterable[tuple[float, str]]) -> str:
+    """What the events wrote, without the keys pressed."""
+    return "".join(data for _, data in events if not isinstance(data, _Key))
+
+
+class _Stopped(Exception):
+    """A command that was stopped, with why and what it wrote."""
+
+    def __init__(self, reason: str, text: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.text = text
+
+
+def _keys(recording: dict[str, object]) -> list[tuple[float, bytes]]:
+    """A recording's ``keys``, each with the seconds to wait before it. A number is a pause, a name in ``KEYS`` is
+    that key, ``{ click = [column, row] }`` clicks there, counting from 1, and any other string is typed."""
+    value = recording.get("keys", [])
+    if not isinstance(value, list):
+        msg = f"{recording['name']}: keys must be a list"
+        raise TypeError(msg)
+    out: list[tuple[float, bytes]] = []
+    pause = 0.0
+    for entry in value:  # pyright: ignore[reportUnknownVariableType]
+        if isinstance(entry, (int, float)) and not isinstance(entry, bool):
+            pause += entry
+        elif isinstance(entry, str) and entry:
+            if entry in KEYS:
+                out.append((KEY_PAUSE + pause, KEYS[entry]))
+            else:
+                out += [(KEY_PAUSE + pause if i == 0 else TYPING, c.encode()) for i, c in enumerate(entry)]
+            pause = 0.0
+        elif (cell := _click(entry)) is not None:
+            # A press and release of the left button, as xterm reports them in SGR mode.
+            out.append((KEY_PAUSE + pause, "\x1b[<0;{0};{1}M\x1b[<0;{0};{1}m".format(*cell).encode()))
+            pause = 0.0
+        else:
+            msg = (
+                f"{recording['name']}: each of keys must be a key, text to type, a number of seconds or "
+                + "{ click = [column, row] }"
+            )
+            raise TypeError(msg)
+    return out
+
+
+def _click(entry: object) -> tuple[int, int] | None:
+    """The column and row of a ``{ click = [column, row] }`` entry, or None for anything else."""
+    match _as_dict(entry).get("click"):
+        case [int(column), int(row)] if column > 0 and row > 0 and not isinstance(column, bool):
+            return column, row
+        case _:
+            return None
+
+
+def _timeout(recording: dict[str, object]) -> float:
+    timeout = recording.get("timeout", TIMEOUT)
+    return float(timeout) if isinstance(timeout, (int, float)) and not isinstance(timeout, bool) else TIMEOUT
+
+
+def _run(
+    command: str,
+    cwd: pathlib.Path,
+    env: dict[str, str],
+    columns: int,
+    rows: int = ROWS,
+    timeout: float = TIMEOUT,
+    keys: _c.Sequence[tuple[float, bytes]] = (),
+) -> tuple[list[tuple[float, str]], int]:
     """Run a command in a pseudo-terminal, returning what it wrote and when, in seconds from its start, and its exit
-    status."""
+    status. ``keys`` are written to it from when it first writes something, each after its pause. It's stopped, and
+    _Stopped raised, when it runs past ``timeout`` or past ``KEYS_GRACE`` after its last key."""
     controller, terminal = pty.openpty()
-    fcntl.ioctl(terminal, termios.TIOCSWINSZ, struct.pack("HHHH", ROWS, columns, 0, 0))
+    fcntl.ioctl(terminal, termios.TIOCSWINSZ, struct.pack("HHHH", rows, columns, 0, 0))
     start = time.monotonic()
     process = subprocess.Popen(  # noqa: S602 - the commands are the recording's own
         command,
@@ -386,9 +514,27 @@ def _run(command: str, cwd: pathlib.Path, env: dict[str, str], columns: int) -> 
     os.close(terminal)
     decoder = codecs.getincrementaldecoder("utf-8")()
     output: list[tuple[float, str]] = []
+    pending = list(keys)
+    deadline = start + timeout
+    reason = f"ran for longer than {timeout:g} seconds"
+    next_key: float | None = None
     try:
         while True:
-            ready, _, _ = select.select([controller], [], [], 0.05)
+            now = time.monotonic()
+            if now >= deadline and process.poll() is None:
+                os.killpg(process.pid, signal.SIGKILL)
+                raise _Stopped(reason, _output_text(output))
+            if next_key is not None and now >= next_key:
+                key = pending.pop(0)[1]
+                os.write(controller, key)
+                # In the recording as an input event, which the player shows over the screen.
+                output.append((now - start, _Key(key.decode())))
+                next_key = now + pending[0][0] if pending else None
+                if not pending and now + KEYS_GRACE < deadline:
+                    deadline = now + KEYS_GRACE
+                    reason = f"was still running {KEYS_GRACE:g} seconds after its last key"
+            wait = min(0.05, max(0.0, (next_key or deadline) - now))
+            ready, _, _ = select.select([controller], [], [], wait)
             if not ready:
                 if process.poll() is not None:
                     break
@@ -401,6 +547,8 @@ def _run(command: str, cwd: pathlib.Path, env: dict[str, str], columns: int) -> 
                 break
             if text := decoder.decode(data):
                 output.append((time.monotonic() - start, text))
+                if pending and next_key is None and len(pending) == len(keys):
+                    next_key = time.monotonic() + pending[0][0]
     finally:
         os.close(controller)
         status = process.wait()
