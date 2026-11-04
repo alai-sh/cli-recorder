@@ -185,3 +185,30 @@ def test_record_timeout(project: pathlib.Path) -> None:
     result = run(project, "record", "extra")
     assert result.returncode != 0
     assert "'sleep 30' ran for longer than 1 seconds, so it was stopped" in result.stderr
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="recording needs a pseudo-terminal")
+def test_record_schemes(project: pathlib.Path) -> None:
+    add_recording(
+        project, '[[recording]]\nname = "extra"\ntitle = "Schemes"\nschemes = true\ncommands = ["echo bg=$COLORFGBG"]\n'
+    )
+    result = run(project, "record", "extra")
+    assert result.returncode == 0, result.stderr
+    # Dark under its own name, so a link to it works without the schemes, and light beside it.
+    for name, colours in (("extra", "15;0"), ("extra-light", "0;15")):
+        lines = (project / "docs" / "casts" / f"{name}.cast").read_text().splitlines()
+        assert f"bg={colours}" in "".join(json.loads(line)[2] for line in lines[1:])
+
+
+def test_reference_schemes_link(project: pathlib.Path) -> None:
+    add_recording(project, '[[recording]]\nname = "extra"\ntitle = "Schemes"\nschemes = true\ncommands = ["true"]\n')
+    page = project / "docs" / "page.md"
+    page.write_text("[Schemes](casts/extra.cast){ .cli-cast }\n")
+    result = run(project, "reference")
+    assert result.returncode == 1
+    assert "the link to recording 'extra' needs the cli-cast-schemes class, as it has schemes" in result.stderr
+
+    page.write_text("[Schemes](casts/extra.cast){ .cli-cast .cli-cast-schemes }\n")
+    assert run(project, "reference").returncode == 0
+    # The reference's own link has it too.
+    assert "(casts/extra.cast){ .cli-cast .cli-cast-schemes }" in (project / "docs" / "cli.md").read_text()

@@ -1,5 +1,8 @@
 // Turns each link to a terminal recording, written in a page as [Title](casts/name.cast){ .cli-cast },
 // into an asciinema player that plays once it's scrolled into view. Without JavaScript the link stays.
+// A recording made for each colour scheme, { .cli-cast .cli-cast-schemes }, has a player for each, name.cast
+// and name-light.cast, and cast.css shows the one for the page's scheme. The other is hidden, so it never
+// comes into view and only plays once the page switches to it.
 (() => {
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   const fontFamily = getComputedStyle(document.body).getPropertyValue("--md-code-font-family").trim();
@@ -23,8 +26,16 @@
       const title = document.createElement("p");
       title.className = "cli-cast__title";
       title.textContent = link.textContent;
-      const screen = document.createElement("div");
-      recording.append(title, screen);
+      const urls = link.classList.contains("cli-cast-schemes")
+        ? { dark: link.href, light: link.href.replace(/\.cast$/, "-light.cast") }
+        : { "": link.href };
+      const screens = Object.entries(urls).map(([scheme, url]) => {
+        const screen = document.createElement("div");
+        screen.className = scheme ? `cli-cast__screen cli-cast__screen--${scheme}` : "cli-cast__screen";
+        screen.dataset.url = url;
+        return screen;
+      });
+      recording.append(title, ...screens);
       // The link is the only thing in its paragraph, which the recording takes the place of, with the paragraphs
       // describing it, if any follow, moved between its title and the player.
       const replaced = link.parentElement.childElementCount === 1 ? link.parentElement : link;
@@ -32,25 +43,30 @@
       while (next?.classList.contains("cli-cast-description")) {
         const description = next;
         next = next.nextElementSibling;
-        screen.before(description);
+        screens[0].before(description);
       }
       replaced.replaceWith(recording);
-
-      screen.cliPlayer = AsciinemaPlayer.create(link.href, screen, {
-        fit: "width",
-        theme: "cli",
-        // The keys a recording presses, from its input events. Off unless asked for.
-        keystrokeOverlay: true,
-        // The longest pause shown comes from the recording, as one comparing how long commands take has none.
-        terminalFontFamily: fontFamily ? `${fontFamily}, monospace` : undefined,
-        // With reduced motion it waits to be played, showing how the recording ends.
-        poster: reducedMotion ? "npt:9999" : undefined,
-      });
-      if (!reducedMotion) {
-        observer.observe(screen);
+      for (const screen of screens) {
+        play(screen.dataset.url, screen);
       }
-      showClicks(screen);
     }
+  }
+
+  function play(url, screen) {
+    screen.cliPlayer = AsciinemaPlayer.create(url, screen, {
+      fit: "width",
+      theme: "cli",
+      // The keys a recording presses, from its input events. Off unless asked for.
+      keystrokeOverlay: true,
+      // The longest pause shown comes from the recording, as one comparing how long commands take has none.
+      terminalFontFamily: fontFamily ? `${fontFamily}, monospace` : undefined,
+      // With reduced motion it waits to be played, showing how the recording ends.
+      poster: reducedMotion ? "npt:9999" : undefined,
+    });
+    if (!reducedMotion) {
+      observer.observe(screen);
+    }
+    showClicks(screen);
   }
 
   // The player shows the keys a recording presses, with keystrokeOverlay, but not a mouse click. A click is
