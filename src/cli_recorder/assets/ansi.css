@@ -1,0 +1,38 @@
+/* Terminal colours for text on a page, such as markers a command prints, in the palette the recordings
+   use (cast.css), so they look the same as in a recording. Applied with attr_list: `✓`{ .ansi-green }. */
+
+.md-typeset .ansi-red {
+  color: #cf222e;
+}
+
+.md-typeset .ansi-green {
+  color: #116329;
+}
+
+.md-typeset .ansi-yellow {
+  color: #8a5a00;
+}
+
+.md-typeset .ansi-cyan {
+  color: #1b7c83;
+}
+
+.md-typeset .ansi-dim {
+  opacity: 0.6;
+}
+
+[data-md-color-scheme="slate"] .md-typeset .ansi-red {
+  color: #ff7b72;
+}
+
+[data-md-color-scheme="slate"] .md-typeset .ansi-green {
+  color: #3fb950;
+}
+
+[data-md-color-scheme="slate"] .md-typeset .ansi-yellow {
+  color: #d29922;
+}
+
+[data-md-color-scheme="slate"] .md-typeset .ansi-cyan {
+  color: #39c5cf;
+}
