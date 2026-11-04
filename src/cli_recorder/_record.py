@@ -13,6 +13,11 @@ temporary directory and the parsed recordings file, and yields environment varia
 ``prepare(recording, directory)`` is called for each recording after its ``files`` are written, for anything else it
 starts with, such as built artifacts.
 
+A recording with ``schemes`` is recorded twice, for a page's dark and light colour schemes, as ``<name>.cast`` and
+``<name>-light.cast``. Each sets ``COLORFGBG`` as rxvt does, so a program that picks its colours from the
+terminal's background, as a TUI drawing its own background does, draws in each. cast.js shows the one matching the
+page.
+
 A ``live`` recording runs without the fixture's environment, so it's only recorded when named. It's written to
 ``<live-casts>/<name>.cast``, to be committed, with an animated SVG of it in GitHub's light and dark palettes for a
 README, ``<name>-light.svg`` and ``<name>-dark.svg``, made by asg (``cargo install asg --locked``).
@@ -86,6 +91,9 @@ KEYS = {
     "pagedown": b"\x1b[6~",
 }
 """The keys a recording's ``keys`` can name, as xterm sends them. Any other string is typed as it's written."""
+SCHEMES = {"": {"COLORFGBG": "15;0"}, "-light": {"COLORFGBG": "0;15"}}
+"""What each of a ``schemes`` recording's files is recorded with, by the suffix on its name: white text on black,
+then black text on white."""
 LIVE_HOLD = 5.0
 """Seconds a live recording holds on how it ends, so its SVG can be read before it starts over."""
 
@@ -149,23 +157,31 @@ def _write(
     extra: _c.Mapping[str, str],
     bin_dir: pathlib.Path,
 ) -> str:
-    """Record one recording into its file, returning its name."""
+    """Record one recording into its file, or a file for each colour scheme, returning its name."""
     live = bool(recording.get("live"))
-    home = pathlib.Path(tempfile.mkdtemp(prefix="cli-recorder-home-")).resolve()
-    try:
-        env = _environment(home, {} if live else extra, bin_dir)
-        env.update({k: str(v) for k, v in _as_dict(recording.get("env")).items()})
-        cast = _record(recording, home, env, getattr(fixture, "prepare", None))
-    finally:
-        shutil.rmtree(home)
-    path = (config.live_casts if live else config.casts) / f"{recording['name']}.cast"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    _ = path.write_text(cast, encoding="utf-8")
-    if live:
-        for theme in ("light", "dark"):
-            svg = path.with_name(f"{path.stem}-{theme}.svg")
-            args = ["asg", "--theme", f"github-{theme}", "--padding", "16", path, svg]
-            _ = subprocess.run(args, check=True)  # noqa: S603 - asg from PATH, checked in record, on our own files
+    if live and recording.get("schemes"):
+        # A live recording's SVGs already come in light and dark, from asg's palettes.
+        msg = f"{recording['name']}: schemes can't be used with live"
+        raise TypeError(msg)
+    schemes: dict[str, dict[str, str]] = SCHEMES if recording.get("schemes") else {"": {}}
+    for suffix, scheme in schemes.items():
+        home = pathlib.Path(tempfile.mkdtemp(prefix="cli-recorder-home-")).resolve()
+        try:
+            env = _environment(home, {} if live else extra, bin_dir)
+            # The recording's own env comes last, so it can still say otherwise.
+            env.update(scheme)
+            env.update({k: str(v) for k, v in _as_dict(recording.get("env")).items()})
+            cast = _record(recording, home, env, getattr(fixture, "prepare", None))
+        finally:
+            shutil.rmtree(home)
+        path = (config.live_casts if live else config.casts) / f"{recording['name']}{suffix}.cast"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _ = path.write_text(cast, encoding="utf-8")
+        if live:
+            for theme in ("light", "dark"):
+                svg = path.with_name(f"{path.stem}-{theme}.svg")
+                args = ["asg", "--theme", f"github-{theme}", "--padding", "16", path, svg]
+                _ = subprocess.run(args, check=True)  # noqa: S603 - asg from PATH, checked in record, on our own files
     return str(recording["name"])
 
 

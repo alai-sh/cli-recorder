@@ -45,6 +45,13 @@ def reference(config: Config, check: bool) -> int:
         for name in by_name
         if name not in shown | linked
     ]
+    # A recording with schemes is only shown in the page's scheme when its link says it has them.
+    problems += [
+        f"{page}: the link to recording '{name}' needs the cli-cast-schemes class, as it has schemes"
+        for page in pages
+        for name, attributes in re.findall(r"casts/([\w-]+)\.cast\)\{([^}]*)\}", page.read_text(encoding="utf-8"))
+        if by_name.get(name, {}).get("schemes") and ".cli-cast-schemes" not in attributes.split()
+    ]
     recordings = {
         command: [
             {**by_name[entry["recording"]], "description": entry.get("description", "")}
@@ -113,7 +120,8 @@ def _command(
 ) -> str:
     lines = [f"## {' '.join(names)}", "", _prose(parser.description or ""), ""]
     for recording in recordings:
-        lines += [f"[{recording['title']}](casts/{recording['name']}.cast){{ .cli-cast }}", ""]
+        classes = ".cli-cast .cli-cast-schemes" if recording.get("schemes") else ".cli-cast"
+        lines += [f"[{recording['title']}](casts/{recording['name']}.cast){{ {classes} }}", ""]
         # cast.js puts the paragraphs describing it between its title and the player; without JavaScript they follow
         # the link.
         for paragraph in re.split(r"\n\s*\n", recording.get("description", "").strip()):

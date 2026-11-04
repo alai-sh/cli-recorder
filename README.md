@@ -69,6 +69,7 @@ columns = 80                  # the terminal's width, 80 by default
 | `keys` | Keys pressed while the last command runs, for a full-screen program such as a TUI. Each is a key name (`enter`, `tab`, `space`, `escape`, `backspace`, `up`, `down`, `left`, `right`, `home`, `end`, `pageup`, `pagedown`) or text to type, and a number is a pause in seconds. `{ click = [column, row] }` clicks the left button there, counting from 1. They start once the program writes something, half a second apart. A program still running 5 seconds after its last key is stopped and the recording fails. Each key is written to the recording as an input event. The player shows each key as it's pressed, and the page shows a click as a ring where it lands |
 | `timeout` | Seconds a command can run before it's stopped and the recording fails, 60 by default |
 | `env` | Environment variables for the recording's commands, on top of the fixture's |
+| `schemes` | `true` to record it twice, for the page's dark and light color schemes, as `<name>.cast` and `<name>-light.cast`. The dark one sets `COLORFGBG=15;0` and the light one `COLORFGBG=0;15`, for a program that picks its colors from the terminal's background. A TUI drawing its own background in full color needs it, as the player's colors can't change what the program draws. It can't be used with `live` |
 | `live` | `true` to skip the fixture's environment and record only when named, as `record NAME`. A live recording is written to `docs/assets/casts/` to be committed, with light and dark SVGs made by asg |
 | `panes` | A split screen in place of `commands`, as `[[recording.panes]]` tables from top to bottom. Each has a `title`, a `directory` and its `commands` |
 
@@ -82,6 +83,14 @@ A page shows a recording with a link that has the `cli-cast` class.
 
 ```markdown
 [Adding collections](casts/add.cast){ .cli-cast }
+```
+
+When a recording has `schemes`, its link also has the `cli-cast-schemes`
+class, so the page shows the recording made for its color scheme.
+`reference` fails when a link to one doesn't.
+
+```markdown
+[Browsing the docs](casts/viewer.cast){ .cli-cast .cli-cast-schemes }
 ```
 
 The CLI reference shows a recording under a command when a

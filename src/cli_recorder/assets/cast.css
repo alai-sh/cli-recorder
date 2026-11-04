@@ -22,8 +22,18 @@
   border-radius: 0.1rem;
 }
 
+/* A recording made for each colour scheme (cast.js), only the player for the page's scheme shown. */
+.cli-cast__screen--dark,
+[data-md-color-scheme="slate"] .cli-cast__screen--light {
+  display: none;
+}
+
+[data-md-color-scheme="slate"] .cli-cast__screen--dark {
+  display: block;
+}
+
 /* A mouse click in a recording (cast.js), a ring where it lands that fades out, with a label beside it. */
-.cli-cast > div:last-child {
+.cli-cast__screen {
   position: relative;
 }
 
