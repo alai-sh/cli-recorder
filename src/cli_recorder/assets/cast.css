@@ -22,6 +22,52 @@
   border-radius: 0.1rem;
 }
 
+/* A mouse click in a recording (cast.js), a ring where it lands that fades out, with a label beside it. */
+.cli-cast > div:last-child {
+  position: relative;
+}
+
+.cli-cast__click {
+  position: absolute;
+  width: 2.4em;
+  height: 2.4em;
+  margin: -1.2em 0 0 -1.2em;
+  border: 0.2em solid var(--md-accent-fg-color);
+  border-radius: 50%;
+  pointer-events: none;
+  animation: cli-cast-click 1.8s ease-out forwards;
+}
+
+.cli-cast__click kbd {
+  position: absolute;
+  left: 2.6em;
+  top: 0.2em;
+  padding: 0.2em 0.6em;
+  border-radius: 0.3em;
+  background: var(--md-accent-fg-color);
+  color: var(--md-accent-bg-color);
+  font-family: var(--md-code-font-family), monospace;
+  font-size: 0.75rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+@keyframes cli-cast-click {
+  0% {
+    transform: scale(0.4);
+    opacity: 1;
+  }
+  20% {
+    transform: scale(1);
+  }
+  75% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
 /* Light, from GitHub's light terminal colours. */
 .asciinema-player-theme-cli {
   --term-color-foreground: var(--md-code-fg-color);
